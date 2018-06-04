@@ -2,15 +2,16 @@ package kfkrpc
 
 import (
 	"bytes"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"log"
 	"net/rpc"
+	"reflect"
 	"sync"
 
 	"github.com/ChaimHong/util"
 	"github.com/Shopify/sarama"
+	"github.com/funny/fastbin"
 )
 
 type Server struct {
@@ -19,9 +20,6 @@ type Server struct {
 	sid      uint16
 
 	decBuffer *bytes.Buffer
-	dec       *gob.Decoder
-	encBuffer *bytes.Buffer
-	enc       *gob.Encoder
 
 	server  *rpc.Server
 	cSeqMap sync.Map // map[uint64]*KFKMessage
@@ -33,7 +31,6 @@ func NewServer(sid uint16) *Server {
 		server:    rpc.NewServer(),
 		sid:       sid,
 		decBuffer: new(bytes.Buffer),
-		encBuffer: new(bytes.Buffer),
 	}
 
 	return srv
@@ -57,6 +54,19 @@ func (srv *Server) Register(rcvr interface{}) {
 	if err != nil {
 		panic(err)
 	}
+
+	typ := reflect.TypeOf(rcvr)
+	for i := 0; i < typ.NumMethod(); i++ {
+		method := typ.Method(i)
+		mtype := method.Type
+
+		argType := mtype.In(1)
+
+		replyType := mtype.In(2)
+
+		fastbin.RegisterType(argType)
+		fastbin.RegisterType(replyType)
+	}
 }
 
 var _ rpc.ServerCodec = (*Server)(nil)
@@ -69,16 +79,12 @@ func (srv *Server) ReadRequestHeader(r *rpc.Request) (e error) {
 	case msg := <-srv.consumer.Messages():
 		log.Printf("Consumed message offset %d %s \n", msg.Offset, msg.Key)
 
-		srv.decBuffer.Reset()
-		// TODO optimize
-		srv.dec = gob.NewDecoder(srv.decBuffer)
-
 		kfkMessage := new(KFKMessage)
-		srv.decBuffer.Write(msg.Value)
-		log.Println(srv.decBuffer.Bytes())
-
-		e = srv.dec.Decode(kfkMessage)
+		srv.decBuffer.Reset()
+		_, e = srv.decBuffer.Write(msg.Value)
 		util.CheckPanic(e)
+
+		getIMessage(kfkMessage).Unmarshal(srv.decBuffer.Bytes())
 
 		fmt.Println(kfkMessage)
 
@@ -95,7 +101,6 @@ func (srv *Server) ReadRequestHeader(r *rpc.Request) (e error) {
 		r.ServiceMethod = kfkMessage.ServiceMethod
 
 		srv.decBuffer.Reset()
-
 		_, e = srv.decBuffer.Write(kfkMessage.Body)
 		util.CheckPanic(e)
 
@@ -110,8 +115,7 @@ func (srv *Server) ReadRequestBody(body interface{}) (err error) {
 		return nil
 	}
 
-	err = srv.dec.Decode(body)
-	srv.decBuffer.Reset()
+	body.(IMessage).Unmarshal(srv.decBuffer.Bytes())
 	return nil
 }
 
@@ -129,15 +133,17 @@ func (srv *Server) WriteResponse(r *rpc.Response, body interface{}) (err error) 
 	fromMsg := rawMessage.(*KFKMessage)
 	fromMsg.To, fromMsg.From = fromMsg.From, fromMsg.To
 
-	srv.encBuffer.Reset()
-	srv.enc = gob.NewEncoder(srv.encBuffer)
+	log.Printf("body %#v %#v \n", body, fromMsg)
 
-	srv.enc.Encode(body)
-	fromMsg.Body = srv.encBuffer.Bytes()
-	srv.encBuffer.Reset()
+	reply := body.(IMessage)
 
-	srv.enc.Encode(fromMsg)
-	msgBytes := srv.encBuffer.Bytes()
+	bytes := make([]byte, reply.Size())
+	reply.Marshal(bytes)
+	fromMsg.Body = bytes
+
+	iFromMsg := getIMessage(fromMsg)
+	msgBytes := make([]byte, iFromMsg.Size())
+	iFromMsg.Marshal(msgBytes)
 
 	fmt.Println("reply", body)
 

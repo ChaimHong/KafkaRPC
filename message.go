@@ -1,7 +1,5 @@
 package kfkrpc
 
-import "github.com/funny/fastapi"
-
 type Message struct {
 	FuncName  string //
 	RPCID     string //
@@ -12,13 +10,19 @@ type Message struct {
 }
 
 type KFKMessage struct {
-	ServiceMethod string
+	ServiceMethod string // 服务名称
 	CorrelationId string // application use - correlation identifier
 	To            uint16 // application use - address to reply to (ex: RPC) serverId
 	From          uint16 //
 	Body          []byte
 }
 
-func getFastApiMessage(msg interface{}) fastapi.Message {
-	return msg.(fastapi.Message)
+func getIMessage(msg interface{}) IMessage {
+	return msg.(IMessage)
+}
+
+type IMessage interface {
+	Size() int
+	Marshal([]byte) int
+	Unmarshal([]byte) int
 }

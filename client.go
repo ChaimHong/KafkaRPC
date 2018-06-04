@@ -2,7 +2,6 @@ package kfkrpc
 
 import (
 	"bytes"
-	"encoding/gob"
 	"fmt"
 	"log"
 	"sync"
@@ -64,7 +63,6 @@ func (c *Client) Call(sid uint16, serviceMethod string, r *Request, cb func(err 
 
 		encBuffer := new(bytes.Buffer)
 		encBuffer.Reset()
-		enc := gob.NewEncoder(encBuffer)
 
 		kfkMsg := new(KFKMessage)
 		kfkMsg.ServiceMethod = serviceMethod
@@ -72,18 +70,23 @@ func (c *Client) Call(sid uint16, serviceMethod string, r *Request, cb func(err 
 		kfkMsg.To = sid
 		kfkMsg.From = c.sid
 
-		enc.Encode(r.Args)
-		kfkMsg.Body = encBuffer.Bytes()
+		argMsg := getIMessage(r.Args)
+		argMsgBytes := make([]byte, argMsg.Size())
+		argMsg.Marshal(argMsgBytes)
 
-		encBuffer.Reset()
-		enc.Encode(kfkMsg)
-		log.Println(kfkMsg, encBuffer.Bytes())
+		kfkMsg.Body = argMsgBytes
+
+		iKfkMsg := getIMessage(kfkMsg)
+		kfkMsgBytes := make([]byte, iKfkMsg.Size())
+
+		log.Println(kfkMsg)
+		iKfkMsg.Marshal(kfkMsgBytes)
 
 		select {
 		case c.producer.Input() <- &sarama.ProducerMessage{
 			Topic: "Request",
 			Key:   sarama.StringEncoder(correlationId),
-			Value: sarama.ByteEncoder(encBuffer.Bytes()),
+			Value: sarama.ByteEncoder(kfkMsgBytes),
 		}:
 		case err := <-c.producer.Errors():
 			log.Println("Failed to produce message", err)
@@ -106,20 +109,15 @@ func (c *Client) decRespone(data []byte, reply interface{}) {
 	c.reading.Lock()
 	defer c.reading.Unlock()
 	c.decBuffer.Reset()
-	dec := gob.NewDecoder(c.decBuffer)
 
 	_, err := c.decBuffer.Write(data)
 	util.CheckPanic(err)
 
 	out := new(KFKMessage)
-	e0 := dec.Decode(out)
-	util.CheckPanic(e0)
+	iOut := getIMessage(out)
+	iOut.Unmarshal(c.decBuffer.Bytes())
 
-	c.decBuffer.Reset()
-	c.decBuffer.Write(out.Body)
-
-	dec.Decode(reply)
-	c.decBuffer.Reset()
+	reply.(IMessage).Unmarshal(out.Body)
 
 	fmt.Printf("%#v\n", reply)
 }

@@ -20,7 +20,14 @@ func (a *ServiceA) A(args *AIn, reply *AOut) error {
 	return nil
 }
 
-func (a *ServiceA) B(args *int, reply *string) error {
-	*reply = fmt.Sprintf("ServiceA.B %d", *args)
+type BIn struct {
+	B int
+}
+type BOut struct {
+	B string
+}
+
+func (a *ServiceA) B(args *BIn, reply *BOut) error {
+	reply.B = fmt.Sprintf("ServiceA.B %d", args.B)
 	return nil
 }
