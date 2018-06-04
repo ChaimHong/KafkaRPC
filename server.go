@@ -3,7 +3,6 @@ package kfkrpc
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"log"
 	"net/rpc"
 	"reflect"
@@ -77,8 +76,6 @@ var errorSidNotMatch = errors.New(errmsg)
 func (srv *Server) ReadRequestHeader(r *rpc.Request) (e error) {
 	select {
 	case msg := <-srv.consumer.Messages():
-		log.Printf("Consumed message offset %d %s \n", msg.Offset, msg.Key)
-
 		kfkMessage := new(KFKMessage)
 		srv.decBuffer.Reset()
 		_, e = srv.decBuffer.Write(msg.Value)
@@ -86,10 +83,8 @@ func (srv *Server) ReadRequestHeader(r *rpc.Request) (e error) {
 
 		getIMessage(kfkMessage).Unmarshal(srv.decBuffer.Bytes())
 
-		fmt.Println(kfkMessage)
-
 		// 不匹配抛出异常
-		if kfkMessage.To != srv.sid {
+		if kfkMessage.ServerId != srv.sid {
 			srv.decBuffer.Reset()
 			return errorSidNotMatch
 		}
@@ -103,8 +98,6 @@ func (srv *Server) ReadRequestHeader(r *rpc.Request) (e error) {
 		srv.decBuffer.Reset()
 		_, e = srv.decBuffer.Write(kfkMessage.Body)
 		util.CheckPanic(e)
-
-		log.Println("read header end")
 		return nil
 	}
 }
@@ -120,44 +113,38 @@ func (srv *Server) ReadRequestBody(body interface{}) (err error) {
 }
 
 func (srv *Server) WriteResponse(r *rpc.Response, body interface{}) (err error) {
-	defer srv.cSeqMap.Delete(r.Seq)
 	if r.Error == errmsg {
 		return nil
 	}
 
 	rawMessage, ok := srv.cSeqMap.Load(r.Seq)
+	srv.cSeqMap.Delete(r.Seq)
+
 	if !ok {
 		return errors.New("seq do not map")
 	}
 
-	fromMsg := rawMessage.(*KFKMessage)
-	fromMsg.To, fromMsg.From = fromMsg.From, fromMsg.To
-
-	log.Printf("body %#v %#v \n", body, fromMsg)
-
 	reply := body.(IMessage)
-
 	bytes := make([]byte, reply.Size())
 	reply.Marshal(bytes)
-	fromMsg.Body = bytes
 
-	iFromMsg := getIMessage(fromMsg)
-	msgBytes := make([]byte, iFromMsg.Size())
-	iFromMsg.Marshal(msgBytes)
+	rsp := new(ResponeMsg)
+	rsp.Error = r.Error
+	rsp.Body = bytes
 
-	fmt.Println("reply", body)
+	iRsp := getIMessage(rsp)
+	msgBytes := make([]byte, iRsp.Size())
+	iRsp.Marshal(msgBytes)
 
 	select {
 	case srv.producer.Input() <- &sarama.ProducerMessage{
 		Topic: "Reply",
-		Key:   sarama.StringEncoder(fromMsg.CorrelationId),
+		Key:   sarama.StringEncoder(rawMessage.(*KFKMessage).CorrelationId),
 		Value: sarama.ByteEncoder(msgBytes),
 	}:
 	case err := <-srv.producer.Errors():
 		log.Println("Failed to produce message", err)
 	}
-
-	fmt.Println("reply ok ")
 
 	return nil
 }

@@ -7,5 +7,6 @@ import (
 
 func main() {
 	fastbin.Register(&kfkrpc.KFKMessage{})
+	fastbin.Register(&kfkrpc.ResponeMsg{})
 	fastbin.GenCode()
 }

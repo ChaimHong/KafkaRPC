@@ -35,4 +35,16 @@ func Client(sid uint16) {
 		fmt.Println(reply2)
 	}
 
+	{
+		reply := &service1.COut{}
+		client.Call(1, service1.ServiceA_C,
+			&kfkrpc.Request{
+				Args:  &service1.CIn{C: 66},
+				Reply: reply,
+			}, func(err error) {
+				done <- true
+			})
+		<-done
+		fmt.Println(reply)
+	}
 }

@@ -31,3 +31,17 @@ func (a *ServiceA) B(args *BIn, reply *BOut) error {
 	reply.B = fmt.Sprintf("ServiceA.B %d", args.B)
 	return nil
 }
+
+const ServiceA_C = "ServiceA.C"
+
+type CIn struct {
+	C int
+}
+type COut struct {
+	C string
+}
+
+func (a *ServiceA) C(args *CIn, reply *COut) error {
+	reply.C = fmt.Sprintf("ServiceA.C %d", args.C*2)
+	return nil
+}

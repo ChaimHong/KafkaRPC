@@ -3,6 +3,57 @@ package service1
 import "encoding/binary"
 import "github.com/ChaimHong/gobuf"
 
+var _ gobuf.Struct = (*CIn)(nil)
+
+func (s *CIn) Size() int {
+	var size int
+	size += gobuf.VarintSize(int64(s.C))
+	return size
+}
+
+func (s *CIn) Marshal(b []byte) int {
+	var n int
+	n += binary.PutVarint(b[n:], int64(s.C))
+	return n
+}
+
+func (s *CIn) Unmarshal(b []byte) int {
+	var n int
+	{
+		v, x := binary.Varint(b[n:])
+		s.C = int(v)
+		n += x
+	}
+	return n
+}
+
+var _ gobuf.Struct = (*COut)(nil)
+
+func (s *COut) Size() int {
+	var size int
+	size += gobuf.UvarintSize(uint64(len(s.C))) + len(s.C)
+	return size
+}
+
+func (s *COut) Marshal(b []byte) int {
+	var n int
+	n += binary.PutUvarint(b[n:], uint64(len(s.C)))
+	copy(b[n:], s.C)
+	n += len(s.C)
+	return n
+}
+
+func (s *COut) Unmarshal(b []byte) int {
+	var n int
+	{
+		l, x := binary.Uvarint(b[n:])
+		n += x
+		s.C = string(b[n : n+int(l)])
+		n += int(l)
+	}
+	return n
+}
+
 var _ gobuf.Struct = (*AIn)(nil)
 
 func (s *AIn) Size() int {

@@ -12,16 +12,13 @@ import (
 )
 
 type Client struct {
-	producer sarama.AsyncProducer
-	consumer sarama.PartitionConsumer
-	sid      uint16
-
-	calls sync.Map // map[string]*pendingCall
-	done  chan bool
-
+	producer  sarama.AsyncProducer
+	consumer  sarama.PartitionConsumer
+	sid       uint16
+	calls     sync.Map // map[string]*pendingCall
+	done      chan bool
 	decBuffer *bytes.Buffer
-
-	reading sync.Mutex
+	reading   sync.Mutex
 }
 
 type pendingCall struct {
@@ -55,54 +52,49 @@ type Request struct {
 }
 
 func (c *Client) Call(sid uint16, serviceMethod string, r *Request, cb func(err error)) {
-	go func() {
-		correlationId := fmt.Sprintf("%d-%d-%d", c.sid, sid, time.Now().UnixNano())
-		pending := &pendingCall{}
-		pending.done = make(chan bool, 1)
-		c.calls.Store(correlationId, pending)
+	correlationId := fmt.Sprintf("%d-%d-%d", c.sid, sid, time.Now().UnixNano())
+	pending := &pendingCall{}
+	pending.done = make(chan bool, 1)
+	c.calls.Store(correlationId, pending)
 
-		encBuffer := new(bytes.Buffer)
-		encBuffer.Reset()
+	encBuffer := new(bytes.Buffer)
+	encBuffer.Reset()
 
-		kfkMsg := new(KFKMessage)
-		kfkMsg.ServiceMethod = serviceMethod
-		kfkMsg.CorrelationId = correlationId
-		kfkMsg.To = sid
-		kfkMsg.From = c.sid
+	kfkMsg := new(KFKMessage)
+	kfkMsg.ServiceMethod = serviceMethod
+	kfkMsg.CorrelationId = correlationId
+	kfkMsg.ServerId = sid
 
-		argMsg := getIMessage(r.Args)
-		argMsgBytes := make([]byte, argMsg.Size())
-		argMsg.Marshal(argMsgBytes)
+	argMsg := getIMessage(r.Args)
+	argMsgBytes := make([]byte, argMsg.Size())
+	argMsg.Marshal(argMsgBytes)
 
-		kfkMsg.Body = argMsgBytes
+	kfkMsg.Body = argMsgBytes
 
-		iKfkMsg := getIMessage(kfkMsg)
-		kfkMsgBytes := make([]byte, iKfkMsg.Size())
+	iKfkMsg := getIMessage(kfkMsg)
+	kfkMsgBytes := make([]byte, iKfkMsg.Size())
 
-		log.Println(kfkMsg)
-		iKfkMsg.Marshal(kfkMsgBytes)
+	log.Println(kfkMsg)
+	iKfkMsg.Marshal(kfkMsgBytes)
 
-		select {
-		case c.producer.Input() <- &sarama.ProducerMessage{
-			Topic: "Request",
-			Key:   sarama.StringEncoder(correlationId),
-			Value: sarama.ByteEncoder(kfkMsgBytes),
-		}:
-		case err := <-c.producer.Errors():
-			log.Println("Failed to produce message", err)
-		}
+	select {
+	case c.producer.Input() <- &sarama.ProducerMessage{
+		Topic: "Request",
+		Key:   sarama.StringEncoder(correlationId),
+		Value: sarama.ByteEncoder(kfkMsgBytes),
+	}:
+	case err := <-c.producer.Errors():
+		log.Println("Failed to produce message", err)
+	}
 
-		log.Println("args send ok")
-		encBuffer.Reset()
-		<-pending.done
+	<-pending.done
 
-		c.decRespone(pending.data, r.Reply)
+	c.decRespone(pending.data, r.Reply)
 
-		cb(nil)
+	cb(nil)
 
-		c.calls.Delete(correlationId)
-		return
-	}()
+	c.calls.Delete(correlationId)
+	return
 }
 
 func (c *Client) decRespone(data []byte, reply interface{}) {
@@ -113,7 +105,7 @@ func (c *Client) decRespone(data []byte, reply interface{}) {
 	_, err := c.decBuffer.Write(data)
 	util.CheckPanic(err)
 
-	out := new(KFKMessage)
+	out := new(ResponeMsg)
 	iOut := getIMessage(out)
 	iOut.Unmarshal(c.decBuffer.Bytes())
 
@@ -130,7 +122,6 @@ ConsumerLoop:
 			log.Printf("Consumed message offset %d %s \n", msg.Offset, msg.Key)
 			key := string(msg.Key)
 			if done, ok := c.calls.Load(key); ok {
-				fmt.Println("consumer", msg.Value)
 				done.(*pendingCall).data = msg.Value
 				done.(*pendingCall).done <- true
 			}
