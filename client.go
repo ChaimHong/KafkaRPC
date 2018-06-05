@@ -9,11 +9,12 @@ import (
 
 	"github.com/ChaimHong/util"
 	"github.com/Shopify/sarama"
+	cluster "github.com/bsm/sarama-cluster"
 )
 
 type Client struct {
-	producer  sarama.AsyncProducer
-	consumer  sarama.PartitionConsumer
+	producer  sarama.SyncProducer
+	consumer  *cluster.Consumer
 	sid       uint16
 	calls     sync.Map // map[string]*pendingCall
 	done      chan bool
@@ -28,14 +29,8 @@ type pendingCall struct {
 
 func NewClient(sclient sarama.Client, sid uint16) *Client {
 	c := new(Client)
-	var err error
-	c.producer, err = sarama.NewAsyncProducerFromClient(sclient)
-	util.CheckPanic(err)
-
-	consumer, e1 := sarama.NewConsumerFromClient(sclient)
-	util.CheckPanic(e1)
-	c.consumer, err = consumer.ConsumePartition("Reply", 0, 0)
-	util.CheckPanic(err)
+	c.producer = getProducer()
+	c.consumer = getResponeConsumer()
 
 	c.decBuffer = new(bytes.Buffer)
 
@@ -76,17 +71,23 @@ func (c *Client) Call(sid uint16, serviceMethod string, r *Request, cb func(err 
 
 	iKfkMsg.Marshal(kfkMsgBytes)
 
-	select {
-	case c.producer.Input() <- &sarama.ProducerMessage{
-		Topic: "Request",
+	partition, offset, err0 := c.producer.SendMessage(&sarama.ProducerMessage{
+		Topic: gMqConfig.RequestTopics[0],
 		Key:   sarama.StringEncoder(correlationId),
 		Value: sarama.ByteEncoder(kfkMsgBytes),
-	}:
-	case err := <-c.producer.Errors():
-		log.Println("Failed to produce message", err)
+	})
+
+	if err0 != nil {
+		cb(err0)
+		log.Printf("send err %v", err0)
+		return
 	}
+	log.Println(partition, offset)
+	log.Printf("input %#v %#v", correlationId, kfkMsgBytes)
 
 	<-pending.done
+
+	log.Printf("done %#v %#v", correlationId, pending.data)
 
 	c.decRespone(pending.data, r.Reply)
 
@@ -116,15 +117,30 @@ func (c *Client) decRespone(data []byte, reply interface{}) {
 func (c *Client) loopMsg() {
 ConsumerLoop:
 	for {
+		log.Println("wait message...")
 		select {
-		case msg := <-c.consumer.Messages():
+		case msg, more := <-c.consumer.Messages():
+			if !more {
+				log.Println("message close")
+				break ConsumerLoop
+			}
 			log.Printf("Consumed message offset %d %s \n", msg.Offset, msg.Key)
 			key := string(msg.Key)
 			if done, ok := c.calls.Load(key); ok {
 				done.(*pendingCall).data = msg.Value
 				done.(*pendingCall).done <- true
+
+				c.consumer.MarkOffset(msg, "")
 			}
 			log.Println("consumer", msg.Offset)
+		case err, more := <-c.consumer.Errors():
+			if more {
+				log.Printf("Kafka consumer error: %v", err.Error())
+			}
+		case ntf, more := <-c.consumer.Notifications():
+			if more {
+				log.Printf("Kafka consumer rebalance: %v", ntf)
+			}
 		case <-c.done:
 			break ConsumerLoop
 		}

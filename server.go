@@ -10,13 +10,15 @@ import (
 
 	"github.com/ChaimHong/util"
 	"github.com/Shopify/sarama"
+	cluster "github.com/bsm/sarama-cluster"
 	"github.com/funny/fastbin"
 )
 
 type Server struct {
-	producer sarama.AsyncProducer
-	consumer sarama.PartitionConsumer
-	sid      uint16
+	producer sarama.SyncProducer
+	consumer *cluster.Consumer
+
+	sid uint16
 
 	decBuffer *bytes.Buffer
 
@@ -36,14 +38,8 @@ func NewServer(sid uint16) *Server {
 }
 
 func (srv *Server) Serve(client sarama.Client) {
-	var err error
-	srv.producer, err = sarama.NewAsyncProducerFromClient(client)
-	util.CheckPanic(err)
-
-	consumer, e1 := sarama.NewConsumerFromClient(client)
-	util.CheckPanic(e1)
-	srv.consumer, err = consumer.ConsumePartition("Request", 0, 0)
-	util.CheckPanic(err)
+	srv.producer = getProducer()
+	srv.consumer = getRequestConsumer()
 
 	srv.server.ServeCodec(srv)
 }
@@ -75,31 +71,61 @@ var errorSidNotMatch = errors.New(errmsg)
 
 func (srv *Server) ReadRequestHeader(r *rpc.Request) (e error) {
 	select {
-	case msg := <-srv.consumer.Messages():
-		kfkMessage := new(KFKMessage)
-		srv.decBuffer.Reset()
-		_, e = srv.decBuffer.Write(msg.Value)
-		util.CheckPanic(e)
-
-		getIMessage(kfkMessage).Unmarshal(srv.decBuffer.Bytes())
-
-		// 不匹配抛出异常
-		if kfkMessage.ServerId != srv.sid {
-			srv.decBuffer.Reset()
-			return errorSidNotMatch
+	case msg, more := <-srv.consumer.Messages():
+		if !more {
+			log.Println("consumer is close")
+			return
 		}
-
-		srv.cSeq++
-		srv.cSeqMap.Store(srv.cSeq, kfkMessage)
-		r.Seq = srv.cSeq
-
-		r.ServiceMethod = kfkMessage.ServiceMethod
-
-		srv.decBuffer.Reset()
-		_, e = srv.decBuffer.Write(kfkMessage.Body)
-		util.CheckPanic(e)
-		return nil
+		return srv.decHeader(r, msg)
+	case err, more := <-srv.consumer.Errors():
+		if more {
+			log.Printf("Kafka consumer error: %v", err.Error())
+		}
+	case ntf, more := <-srv.consumer.Notifications():
+		if more {
+			log.Printf("Kafka consumer rebalance: %v", ntf)
+		}
 	}
+
+	return nil
+}
+
+func (srv *Server) decHeader(r *rpc.Request, msg *sarama.ConsumerMessage) (err error) {
+	defer func() {
+		if e0 := recover(); e0 != nil {
+			log.Printf("dec header err %s", e0)
+			err = errorSidNotMatch
+		}
+	}()
+
+	var e error
+	kfkMessage := new(KFKMessage)
+	srv.decBuffer.Reset()
+	_, e = srv.decBuffer.Write(msg.Value)
+	util.CheckPanic(e)
+
+	getIMessage(kfkMessage).Unmarshal(srv.decBuffer.Bytes())
+
+	log.Printf("header %#v", kfkMessage)
+
+	// 不匹配抛出异常
+	if kfkMessage.ServerId != srv.sid {
+		srv.decBuffer.Reset()
+		return errorSidNotMatch
+	}
+
+	srv.cSeq++
+	srv.cSeqMap.Store(srv.cSeq, kfkMessage)
+	r.Seq = srv.cSeq
+
+	r.ServiceMethod = kfkMessage.ServiceMethod
+
+	srv.decBuffer.Reset()
+	_, e = srv.decBuffer.Write(kfkMessage.Body)
+	util.CheckPanic(e)
+
+	srv.consumer.MarkOffset(msg, "")
+	return
 }
 
 func (srv *Server) ReadRequestBody(body interface{}) (err error) {
@@ -109,6 +135,8 @@ func (srv *Server) ReadRequestBody(body interface{}) (err error) {
 	}
 
 	body.(IMessage).Unmarshal(srv.decBuffer.Bytes())
+
+	log.Printf("header %#v", body)
 	return nil
 }
 
@@ -136,15 +164,18 @@ func (srv *Server) WriteResponse(r *rpc.Response, body interface{}) (err error) 
 	msgBytes := make([]byte, iRsp.Size())
 	iRsp.Marshal(msgBytes)
 
-	select {
-	case srv.producer.Input() <- &sarama.ProducerMessage{
-		Topic: "Reply",
+	partition, offset, err0 := srv.producer.SendMessage(&sarama.ProducerMessage{
+		Topic: gMqConfig.ResponeTopics[0],
 		Key:   sarama.StringEncoder(rawMessage.(*KFKMessage).CorrelationId),
 		Value: sarama.ByteEncoder(msgBytes),
-	}:
-	case err := <-srv.producer.Errors():
-		log.Println("Failed to produce message", err)
+	})
+
+	if err0 != nil {
+		log.Printf("send err %v", err0)
+		return err0
 	}
+
+	log.Println("send ok", partition, offset, err0)
 
 	return nil
 }

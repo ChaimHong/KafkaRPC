@@ -9,6 +9,7 @@ import (
 
 func Client(sid uint16) {
 	client := kfkrpc.NewClient(newSaramaClient(), sid)
+	_ = client
 	done := make(chan bool, 1)
 	{
 		reply := &service1.AOut{}
@@ -22,29 +23,29 @@ func Client(sid uint16) {
 		<-done
 		fmt.Println(reply)
 	}
-	{
-		reply2 := &service1.BOut{}
-		client.Call(1, service1.ServiceA_B,
-			&kfkrpc.Request{
-				Args:  &service1.BIn{B: 3},
-				Reply: reply2,
-			}, func(err error) {
-				done <- true
-			})
-		<-done
-		fmt.Println(reply2)
-	}
+	// {
+	// 	reply2 := &service1.BOut{}
+	// 	client.Call(1, service1.ServiceA_B,
+	// 		&kfkrpc.Request{
+	// 			Args:  &service1.BIn{B: 3},
+	// 			Reply: reply2,
+	// 		}, func(err error) {
+	// 			done <- true
+	// 		})
+	// 	<-done
+	// 	fmt.Println(reply2)
+	// }
 
-	{
-		reply := &service1.COut{}
-		client.Call(1, service1.ServiceA_C,
-			&kfkrpc.Request{
-				Args:  &service1.CIn{C: 66},
-				Reply: reply,
-			}, func(err error) {
-				done <- true
-			})
-		<-done
-		fmt.Println(reply)
-	}
+	// {
+	// 	reply := &service1.COut{}
+	// 	client.Call(1, service1.ServiceA_C,
+	// 		&kfkrpc.Request{
+	// 			Args:  &service1.CIn{C: 66},
+	// 			Reply: reply,
+	// 		}, func(err error) {
+	// 			done <- true
+	// 		})
+	// 	<-done
+	// 	fmt.Println(reply)
+	// }
 }
