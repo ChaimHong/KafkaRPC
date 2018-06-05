@@ -74,7 +74,6 @@ func (c *Client) Call(sid uint16, serviceMethod string, r *Request, cb func(err 
 	iKfkMsg := getIMessage(kfkMsg)
 	kfkMsgBytes := make([]byte, iKfkMsg.Size())
 
-	log.Println(kfkMsg)
 	iKfkMsg.Marshal(kfkMsgBytes)
 
 	select {
