@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/ChaimHong/fastbin"
 	"github.com/ChaimHong/util"
 	"github.com/Shopify/sarama"
-	"github.com/funny/fastbin"
 )
 
 type Server struct {
