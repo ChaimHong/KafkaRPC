@@ -4,9 +4,14 @@ import "fmt"
 
 type ServiceA struct{}
 
+type SA struct {
+	F1 int
+}
 type AIn struct {
 	Time int64
 	V    int
+	Sa   *SA
+	Sa1  SA
 }
 type AOut struct {
 	V    string

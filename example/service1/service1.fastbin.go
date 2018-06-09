@@ -3,30 +3,25 @@ package service1
 import "encoding/binary"
 import "github.com/ChaimHong/gobuf"
 
-var _ gobuf.Struct = (*AIn)(nil)
+var _ gobuf.Struct = (*SA)(nil)
 
-func (s *AIn) Size() int {
+func (s *SA) Size() int {
 	var size int
-	size += 8
-	size += gobuf.VarintSize(int64(s.V))
+	size += gobuf.VarintSize(int64(s.F1))
 	return size
 }
 
-func (s *AIn) Marshal(b []byte) int {
+func (s *SA) Marshal(b []byte) int {
 	var n int
-	binary.LittleEndian.PutUint64(b[n:], uint64(s.Time))
-	n += 8
-	n += binary.PutVarint(b[n:], int64(s.V))
+	n += binary.PutVarint(b[n:], int64(s.F1))
 	return n
 }
 
-func (s *AIn) Unmarshal(b []byte) int {
+func (s *SA) Unmarshal(b []byte) int {
 	var n int
-	s.Time = int64(binary.LittleEndian.Uint64(b[n:]))
-	n += 8
 	{
 		v, x := binary.Varint(b[n:])
-		s.V = int(v)
+		s.F1 = int(v)
 		n += x
 	}
 	return n
@@ -163,5 +158,58 @@ func (s *COut) Unmarshal(b []byte) int {
 		s.C = string(b[n : n+int(l)])
 		n += int(l)
 	}
+	return n
+}
+
+var _ gobuf.Struct = (*AIn)(nil)
+
+func (s *AIn) Size() int {
+	var size int
+	size += 8
+	size += gobuf.VarintSize(int64(s.V))
+	size += 1
+	if s.Sa != nil {
+		size += s.Sa.Size()
+	}
+	size += s.Sa1.Size()
+	return size
+}
+
+func (s *AIn) Marshal(b []byte) int {
+	var n int
+	binary.LittleEndian.PutUint64(b[n:], uint64(s.Time))
+	n += 8
+	n += binary.PutVarint(b[n:], int64(s.V))
+	if s.Sa != nil {
+		b[n] = 1
+		n++
+		n += s.Sa.Marshal(b[n:])
+	} else {
+		b[n] = 0
+		n++
+	}
+	n += s.Sa1.Marshal(b[n:])
+	return n
+}
+
+func (s *AIn) Unmarshal(b []byte) int {
+	var n int
+	s.Time = int64(binary.LittleEndian.Uint64(b[n:]))
+	n += 8
+	{
+		v, x := binary.Varint(b[n:])
+		s.V = int(v)
+		n += x
+	}
+	if b[n] != 0 {
+		n += 1
+		val1 := new(SA)
+		// use genUnmarshaler2
+		n += val1.Unmarshal(b[n:])
+		s.Sa = val1
+	} else {
+		n += 1
+	}
+	n += s.Sa1.Unmarshal(b[n:])
 	return n
 }

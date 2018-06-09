@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/funny/fastbin"
+	"github.com/ChaimHong/fastbin"
 )
 
 type Server struct {

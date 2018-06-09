@@ -4,12 +4,11 @@ import (
 	"flag"
 	"time"
 
+	"github.com/ChaimHong/fastbin"
+	"github.com/ChaimHong/kfkrpc"
 	"github.com/ChaimHong/kfkrpc/example/service1"
 	"github.com/ChaimHong/util"
 	"github.com/Shopify/sarama"
-	"github.com/funny/fastbin"
-
-	"github.com/ChaimHong/kfkrpc"
 )
 
 type config struct {
