@@ -2,41 +2,56 @@ package kfkrpc
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
-	"log"
+	"net"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/ChaimHong/util"
 	"github.com/Shopify/sarama"
-	cluster "github.com/bsm/sarama-cluster"
 )
 
 type Client struct {
-	producer  sarama.SyncProducer
-	consumer  *cluster.Consumer
+	producer sarama.SyncProducer
+
 	sid       uint16
 	calls     sync.Map // map[string]*pendingCall
 	done      chan bool
 	decBuffer *bytes.Buffer
 	reading   sync.Mutex
+
+	// middleware
+	middlesId uint32
+	middles   sync.Map // map [uint32]*MiddleClient
 }
 
 type pendingCall struct {
 	done chan bool
+	err  string
 	data []byte
 }
 
-func NewClient(sclient sarama.Client, sid uint16) *Client {
+func NewClient(sid uint16, middles []string) *Client {
 	c := new(Client)
 	c.producer = getProducer()
-	c.consumer = getResponeConsumer()
 
 	c.decBuffer = new(bytes.Buffer)
 
 	c.sid = sid
 
-	go c.loopMsg()
+	for _, addr := range middles {
+		addr = strings.Replace(addr, "0.0.0.0", "127.0.0.1", 1)
+		middle, err := newMiddleClient(addr, sid, c)
+		if err == nil {
+			id := atomic.AddUint32(&c.middlesId, 1)
+			c.middles.Store(id, middle)
+		} else {
+			Logger.Printf("middle %s could not connect:%s", addr, err)
+		}
+	}
 
 	return c
 }
@@ -59,92 +74,96 @@ func (c *Client) Call(sid uint16, serviceMethod string, r *Request, cb func(err 
 	kfkMsg.ServiceMethod = serviceMethod
 	kfkMsg.CorrelationId = correlationId
 	kfkMsg.ServerId = sid
+	kfkMsg.ClientId = c.sid
 
-	argMsg := getIMessage(r.Args)
-	argMsgBytes := make([]byte, argMsg.Size())
-	argMsg.Marshal(argMsgBytes)
+	kfkMsg.Body = getIMessageBytes(r.Args)
+	kfkMsgBytes := getIMessageBytes(kfkMsg)
 
-	kfkMsg.Body = argMsgBytes
-
-	iKfkMsg := getIMessage(kfkMsg)
-	kfkMsgBytes := make([]byte, iKfkMsg.Size())
-
-	iKfkMsg.Marshal(kfkMsgBytes)
-
-	partition, offset, err0 := c.producer.SendMessage(&sarama.ProducerMessage{
-		Topic: gMqConfig.RequestTopics[0],
-		Key:   sarama.StringEncoder(correlationId),
-		Value: sarama.ByteEncoder(kfkMsgBytes),
-	})
+	_, _, err0 := c.producer.SendMessage(
+		&sarama.ProducerMessage{
+			Topic: gMqConfig.RequestTopics[0],
+			Key:   sarama.StringEncoder(correlationId),
+			Value: sarama.ByteEncoder(kfkMsgBytes),
+		})
 
 	if err0 != nil {
 		cb(err0)
-		log.Printf("send err %v", err0)
+		Logger.Printf("send err %v", err0)
 		return
 	}
-	log.Println(partition, offset)
-	log.Printf("input %#v %#v", correlationId, kfkMsgBytes)
 
 	<-pending.done
 
-	log.Printf("done %#v %#v", correlationId, pending.data)
-
-	c.decRespone(pending.data, r.Reply)
-
-	cb(nil)
+	if pending.err == "" {
+		getIMessage(r.Reply).Unmarshal(pending.data)
+		cb(nil)
+	} else {
+		cb(errors.New(pending.err))
+	}
 
 	c.calls.Delete(correlationId)
 	return
 }
 
-func (c *Client) decRespone(data []byte, reply interface{}) {
-	c.reading.Lock()
-	defer c.reading.Unlock()
-	c.decBuffer.Reset()
-
-	_, err := c.decBuffer.Write(data)
-	util.CheckPanic(err)
-
-	out := new(ResponeMsg)
-	iOut := getIMessage(out)
-	iOut.Unmarshal(c.decBuffer.Bytes())
-
-	reply.(IMessage).Unmarshal(out.Body)
-
-	fmt.Printf("%#v\n", reply)
+type MiddleClient struct {
+	id   uint
+	conn net.Conn
 }
 
-func (c *Client) loopMsg() {
-ConsumerLoop:
-	for {
-		log.Println("wait message...")
-		select {
-		case msg, more := <-c.consumer.Messages():
-			if !more {
-				log.Println("message close")
-				break ConsumerLoop
-			}
-			log.Printf("Consumed message offset %d %s \n", msg.Offset, msg.Key)
-			key := string(msg.Key)
-			if done, ok := c.calls.Load(key); ok {
-				done.(*pendingCall).data = msg.Value
-				done.(*pendingCall).done <- true
+func newMiddleClient(addr string, sid uint16, client *Client) (*MiddleClient, error) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
 
-				c.consumer.MarkOffset(msg, "")
-			}
-			log.Println("consumer", msg.Offset)
-		case err, more := <-c.consumer.Errors():
-			if more {
-				log.Printf("Kafka consumer error: %v", err.Error())
-			}
-		case ntf, more := <-c.consumer.Notifications():
-			if more {
-				log.Printf("Kafka consumer rebalance: %v", ntf)
-			}
-		case <-c.done:
-			break ConsumerLoop
+	buf := [2]byte{}
+	binary.LittleEndian.PutUint16(buf[:], sid)
+	_, err = conn.Write(buf[:])
+	if err != nil {
+		return nil, err
+	}
+
+	mc := &MiddleClient{
+		conn: conn,
+	}
+	go mc.loop(client)
+
+	return mc, nil
+}
+
+type MiddleReply struct {
+	CorrelationId string
+	Error         string
+	Body          []byte
+}
+
+func (mc *MiddleClient) loop(client *Client) (err error) {
+	for {
+		var msg []byte
+		msg, err = Receive(mc.conn)
+		if err != nil {
+			break
+		}
+
+		reply := new(MiddleReply)
+		getIMessage(reply).Unmarshal(msg)
+
+		if done, ok := client.calls.Load(reply.CorrelationId); ok {
+			call := done.(*pendingCall)
+			call.data = reply.Body
+			call.err = reply.Error
+			call.done <- true
+		}
+
+		select {
+		case <-client.done:
+			break
+		default:
 		}
 	}
 
-	log.Println("loop message end ")
+	client.middles.Delete(mc.id)
+	Logger.Println("MiddleClient loop end")
+
+	return
 }

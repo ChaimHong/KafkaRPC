@@ -3,12 +3,10 @@ package kfkrpc
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/Shopify/sarama"
 	cluster "github.com/bsm/sarama-cluster"
@@ -16,22 +14,20 @@ import (
 )
 
 var (
-	configPath string
-	configName = "kafka.json"
-	gMqConfig  = new(MqConfig)
+	gMqConfig *MqConfig
+	Logger    = log.New(os.Stdout, "", log.LstdFlags)
 )
 
-func init() {
-	var err error
+type EnDecError struct {
+	Err interface{}
+}
 
-	workPath, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
+func (err *EnDecError) Error() string {
+	return fmt.Sprintf("%s", err.Err)
+}
 
-	configPath = filepath.Join(workPath, "conf")
-	LoadJsonConfig(gMqConfig, configName)
-	log.Printf("init %#v ", gMqConfig)
+func LoadMqConfig(mqc *MqConfig) {
+	gMqConfig = mqc
 }
 
 type MqConfig struct {
@@ -45,51 +41,15 @@ type MqConfig struct {
 	ResponeConsumerId string   `json:"responeConsumerGroup"`
 }
 
-func LoadJsonConfig(config interface{}, filename string) {
-	var err error
-	var decoder *json.Decoder
-
-	file := OpenFile(filename)
-	defer file.Close()
-
-	decoder = json.NewDecoder(file)
-	if err = decoder.Decode(config); err != nil {
-		msg := fmt.Sprintf("Decode json fail for config file at %s. Error: %v", filename, err)
-		panic(msg)
-	}
-
-	json.Marshal(config)
-}
-
-func GetFullPath(filename string) string {
-	return filepath.Join(configPath, filename)
-}
-
-func OpenFile(filename string) *os.File {
-	fullPath := filepath.Join(configPath, filename)
-
-	var file *os.File
-	var err error
-
-	if file, err = os.Open(fullPath); err != nil {
-		msg := fmt.Sprintf("Can not load config at %s. Error: %v", fullPath, err)
-		panic(msg)
-	}
-
-	return file
-}
-
 func getConfig() (clusterCfg *cluster.Config) {
 	clusterCfg = cluster.NewConfig()
-
-	log.Printf("confing %#v", gMqConfig)
 
 	clusterCfg.Net.SASL.Enable = true
 	clusterCfg.Net.SASL.User = gMqConfig.Ak
 	clusterCfg.Net.SASL.Password = gMqConfig.Password
 	clusterCfg.Net.SASL.Handshake = true
 
-	certBytes, err := ioutil.ReadFile(GetFullPath(gMqConfig.CertFile))
+	certBytes, err := ioutil.ReadFile(gMqConfig.CertFile)
 	clientCertPool := x509.NewCertPool()
 	ok := clientCertPool.AppendCertsFromPEM(certBytes)
 	if !ok {
@@ -106,12 +66,11 @@ func getConfig() (clusterCfg *cluster.Config) {
 	clusterCfg.Consumer.Return.Errors = true
 	clusterCfg.Consumer.Offsets.Initial = sarama.OffsetOldest
 	clusterCfg.Group.Return.Notifications = true
-	clusterCfg.Group.Mode = ConsumerModePartitions
 
 	clusterCfg.Version = sarama.V0_10_0_0
 	if err = clusterCfg.Validate(); err != nil {
 		msg := fmt.Sprintf("Kafka consumer config invalidate. config: %v. err: %v", *clusterCfg, err)
-		fmt.Println(msg)
+		Logger.Println(msg)
 		panic(msg)
 	}
 
@@ -145,8 +104,6 @@ func getResponeConsumer() (consumer *cluster.Consumer) {
 }
 
 func getProducer() (producer sarama.SyncProducer) {
-	// sarama.Logger = log.New(os.Stdout, "[Sarama] ", log.LstdFlags)
-
 	mqConfig := sarama.NewConfig()
 	mqConfig.Net.SASL.Enable = true
 	mqConfig.Net.SASL.User = gMqConfig.Ak
@@ -154,9 +111,9 @@ func getProducer() (producer sarama.SyncProducer) {
 	mqConfig.Net.SASL.Handshake = true
 	mqConfig.ClientID = "zdgj_s0"
 
-	log.Println(mqConfig.Net.SASL)
+	Logger.Println(mqConfig.Net.SASL)
 
-	certBytes, err := ioutil.ReadFile(GetFullPath(gMqConfig.CertFile))
+	certBytes, err := ioutil.ReadFile(gMqConfig.CertFile)
 	clientCertPool := x509.NewCertPool()
 	ok := clientCertPool.AppendCertsFromPEM(certBytes)
 	if !ok {

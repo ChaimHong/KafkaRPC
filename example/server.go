@@ -2,22 +2,16 @@ package main
 
 import (
 	"log"
-	"time"
 
 	"github.com/ChaimHong/kfkrpc"
 	"github.com/ChaimHong/kfkrpc/example/service1"
 )
 
-var generate bool
-
-func Server(sid uint16) {
+func Server(sid uint16, addr string) {
 	server := kfkrpc.NewServer(sid)
 	server.Register(&service1.ServiceA{})
 
-	log.Println("start server...")
-	go server.Serve(newSaramaClient())
+	go server.Serve(addr)
 
-	for {
-		time.Sleep(10 * time.Second)
-	}
+	log.Println("start server...", sid, addr)
 }

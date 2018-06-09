@@ -2,37 +2,66 @@ package main
 
 import (
 	"flag"
+	"time"
 
+	"github.com/ChaimHong/kfkrpc/example/service1"
 	"github.com/ChaimHong/util"
 	"github.com/Shopify/sarama"
 	"github.com/funny/fastbin"
 
 	"github.com/ChaimHong/kfkrpc"
-	"github.com/ChaimHong/kfkrpc/example/service1"
 )
 
+type config struct {
+	RpcServers    map[int]string  `json:"rpc_servers"`
+	MiddleServers []string        `json:"middle_servers"`
+	Mq            kfkrpc.MqConfig `json:"mq"`
+}
+
 func main() {
-	isSrv := false
-	gen := false
-	var sid int
-	flag.BoolVar(&isSrv, "is_server", true, "is server")
+	var (
+		isSrv      = false
+		gen        = false
+		middle     = false
+		configFile = ""
+		sid        int
+	)
+
+	flag.BoolVar(&isSrv, "is_server", false, "is server")
 	flag.IntVar(&sid, "sid", 0, "sid")
 	flag.BoolVar(&gen, "gen", false, "gen")
+	flag.BoolVar(&middle, "middle", false, "middle")
+	flag.StringVar(&configFile, "config", "", "config file")
 
 	flag.Parse()
 
 	if gen {
 		server := kfkrpc.NewServer(0)
 		server.Register(&service1.ServiceA{})
-
 		fastbin.GenCode()
 		return
 	}
 
-	if isSrv {
-		Server(uint16(sid))
+	cfg := new(config)
+	err := util.LoadJsonConfig(cfg, configFile)
+	if err != nil {
+		panic(err)
+	}
+
+	kfkrpc.LoadMqConfig(&cfg.Mq)
+
+	if middle {
+		MiddleWare(cfg.MiddleServers[sid])
 	} else {
-		Client(uint16(sid))
+		if isSrv {
+			Server(uint16(sid), cfg.RpcServers[sid])
+		} else {
+			Client(uint16(sid), cfg.MiddleServers)
+		}
+	}
+
+	for {
+		time.Sleep(10 * time.Second)
 	}
 }
 
