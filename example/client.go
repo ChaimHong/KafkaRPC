@@ -2,19 +2,24 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/ChaimHong/kfkrpc"
 	"github.com/ChaimHong/kfkrpc/example/service1"
 )
 
-func Client(sid uint16) {
-	client := kfkrpc.NewClient(newSaramaClient(), sid)
+func Client(sid uint16, middles []string) {
+	client := kfkrpc.NewClient(sid, middles)
+	_ = client
 	done := make(chan bool, 1)
 	{
 		reply := &service1.AOut{}
 		client.Call(1, service1.ServiceA_A,
 			&kfkrpc.Request{
-				Args:  &service1.AIn{V: 2},
+				Args: &service1.AIn{
+					V:    2,
+					Time: time.Now().UnixNano(),
+				},
 				Reply: reply,
 			}, func(err error) {
 				done <- true

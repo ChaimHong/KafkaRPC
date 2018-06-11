@@ -1,0 +1,8 @@
+{    
+    "servers": ["kafka-cn-internet.aliyun.com:8080"],
+    "username": "密钥",
+    "password": "密钥",
+    "cert_file": "ca-cert",   
+    "requestTopics": [],
+    "requestConsumerGroup": ""
+}
