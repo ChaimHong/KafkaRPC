@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// func TestRV(t *testing.T) {
-// 	v := new(service1.AIn)
-// 	i := reflect.New(reflect.TypeOf(v).Elem())
-// 	log.Printf("%#v\n", i)
-
-// 	_ = i.(kfkrpc.IMessage)
-// }
-
 func TestBytes(t *testing.T) {
 	b := []byte{0, 0, 0, 0}
 	binary.LittleEndian.PutUint16(b[:], 6)

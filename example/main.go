@@ -8,7 +8,6 @@ import (
 	"github.com/ChaimHong/kfkrpc"
 	"github.com/ChaimHong/kfkrpc/example/service1"
 	"github.com/ChaimHong/util"
-	"github.com/Shopify/sarama"
 )
 
 type config struct {
@@ -62,15 +61,4 @@ func main() {
 	for {
 		time.Sleep(10 * time.Second)
 	}
-}
-
-func newSaramaClient() sarama.Client {
-	config := sarama.NewConfig()
-	addrs := []string{
-		"localhost:9092",
-	}
-	gClient, e := sarama.NewClient(addrs, config)
-	util.CheckPanic(e)
-
-	return gClient
 }

@@ -37,8 +37,6 @@ type MqConfig struct {
 	CertFile          string   `json:"cert_file"`
 	RequestTopics     []string `json:"requestTopics"`
 	RequestConsumerId string   `json:"requestConsumerGroup"`
-	ResponeTopics     []string `json:"responeTopics"`
-	ResponeConsumerId string   `json:"responeConsumerGroup"`
 }
 
 func getConfig() (clusterCfg *cluster.Config) {
@@ -81,19 +79,6 @@ func getRequestConsumer() (consumer *cluster.Consumer) {
 	clusterCfg := getConfig()
 	var err error
 	consumer, err = cluster.NewConsumer(gMqConfig.Servers, gMqConfig.RequestConsumerId, gMqConfig.RequestTopics, clusterCfg)
-	if err != nil {
-		msg := fmt.Sprintf("Create kafka consumer error: %v. config: %v", err, clusterCfg)
-		fmt.Println(msg)
-		panic(msg)
-	}
-
-	return
-}
-
-func getResponeConsumer() (consumer *cluster.Consumer) {
-	clusterCfg := getConfig()
-	var err error
-	consumer, err = cluster.NewConsumer(gMqConfig.Servers, gMqConfig.ResponeConsumerId, gMqConfig.ResponeTopics, clusterCfg)
 	if err != nil {
 		msg := fmt.Sprintf("Create kafka consumer error: %v. config: %v", err, clusterCfg)
 		fmt.Println(msg)
